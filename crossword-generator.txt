@@ -1,0 +1,259 @@
+generateCrossword[gridSize0_Integer, words0_List] := 
+ Module[{gridSize = gridSize0, words = words0},
+  numWords = Length[words];
+  blankNum = 27;
+  alphabetMap = 
+   AssociationThread[Alphabet[][[1 ;; blankNum - 1]], 
+    Range[blankNum - 1]];
+  Append[alphabetMap, "blank" -> blankNum];
+  satVariables = {};
+  satConstraints = {};
+  
+  oneTrue[x0_List, atMost0_Integer] := 
+   Module[{variables = x0, atMost = atMost0},
+    res = {};
+    listSize = Length[variables];
+    
+    prefFunc = "pref" <> ToString[Head@variables[[1]]];
+    prefVariables = prefFunc[#[[1]]] & /@ variables;
+    
+    prefConstraints = Table[
+       {Implies[variables[[i]], prefVariables[[i + 1]]],
+        Implies[prefVariables[[i]], prefVariables[[i + 1]]],
+        Implies[prefVariables[[i]], Not@variables[[i]]]},
+       {i, listSize - 1}
+       ] // Flatten;
+    
+    AppendTo[prefConstraints, 
+     Implies[prefVariables[[listSize]], Not@variables[[listSize]]]];
+    
+    If[atMost == 0, 
+     finalConstraints = Or @@ variables && And @@ prefConstraints, 
+     finalConstraints = And @@ prefConstraints];
+    finalVarList = Join[variables, prefVariables] // Flatten;
+    
+    Return[{finalVarList, finalConstraints}];
+    ];
+  
+  wordPlacementConstraints = Table[
+    oneTrue[
+     Table[wp[{x, i, j, k}], {i, 1, gridSize}, {j, 1, gridSize}, {k, 
+        0, 1}] // Flatten, 0],
+    {x, 1, numWords}];
+  
+  alphabetPlacementContraints = Flatten[Table[
+     oneTrue[Table[alpha[{x, i, j}], {x, 1, blankNum}] // Flatten, 
+      1],
+     {i, 1, gridSize}, {j, 1, gridSize}], 1];
+  
+  AppendTo[satVariables, #[[1]]] & /@ wordPlacementConstraints;
+  AppendTo[satConstraints, #[[2]]] & /@ wordPlacementConstraints;
+  AppendTo[satVariables, #[[1]]] & /@ alphabetPlacementContraints;
+  AppendTo[satConstraints, #[[2]]] & /@ alphabetPlacementContraints;
+  satVariables = satVariables // Flatten;
+  
+  letterConstraints = {};
+  
+  Table[
+   wordLen = StringLength[words[[i]]];
+   
+   AppendTo[letterConstraints, Flatten@Table[
+      Table[
+        Implies[wp[{i, j, k, 0}], 
+         alpha[{alphabetMap[StringPart[words[[i]], y]], j, 
+           k + y - 1}]],
+        {y, 1, wordLen}
+        ] // Flatten,
+      
+      {j, 1, gridSize}, 
+      {k, 1, gridSize - wordLen + 1}
+      ]];
+   
+   AppendTo[letterConstraints, Flatten@Table[
+      Table[
+        Implies[wp[{i, j, k, 1}], 
+         alpha[{alphabetMap[StringPart[words[[i]], y]], j + y - 1, 
+           k}]],
+        {y, 1, wordLen}
+        ] // Flatten,
+      
+      {j, 1, gridSize - wordLen + 1}, 
+      {k, 1, gridSize}
+      ]];
+   
+   AppendTo[letterConstraints, Flatten@Table[
+      Implies[wp[{i, j, k, 0}], alpha[{blankNum, j, k + wordLen}]],
+      {j, 1, gridSize}, 
+      {k, 1, gridSize - wordLen}
+      ]];
+   
+   AppendTo[letterConstraints, Flatten@Table[
+      Implies[wp[{i, j, k, 1}], alpha[{blankNum, j + wordLen, k}]],
+      {j, 1, gridSize - wordLen}, 
+      {k, 1, gridSize}
+      ]],
+   {i, 1, numWords}
+   ];
+  
+  letterConstraints = And @@ Flatten@letterConstraints;
+  AppendTo[satConstraints, letterConstraints];
+  
+  horizontalConstraints = {Not@# || Not@#} & /@ Select[
+      Flatten[
+       Table[wp[{x, i, j, 0}], {x, 1, numWords}, {i, 1, gridSize}, {j,
+          1, gridSize}], 2],
+       StringLength[words[[#[[1]][[1]]]]] + #[[1]][[3]] - 1 > 
+        gridSize &] // Flatten;
+  
+  verticalConstraints = {Not@# || Not@#} & /@ Select[
+      Flatten[
+       Table[wp[{x, i, j, 1}], {x, 1, numWords}, {i, 1, gridSize}, {j,
+          1, gridSize}], 2],
+       StringLength[words[[#[[1]][[1]]]]] + #[[1]][[2]] - 1 > 
+        gridSize &] // Flatten;
+  
+  AppendTo[satConstraints, And @@ horizontalConstraints];
+  AppendTo[satConstraints, And @@ verticalConstraints];
+  
+  startConstraints = {};
+  
+  Table[
+   If[y - 1 >= 1,
+    If[y + 1 <= gridSize,
+     AppendTo[startConstraints, 
+      BooleanMinimize@
+       Implies[(alpha[{blankNum, x, y - 1}] && 
+          Not@alpha[{blankNum, x, y}] && 
+          Not@alpha[{blankNum, x, y + 1}]), 
+        Or @@ Table[wp[{i, x, y, 0}], {i, 1, numWords}]]] ,
+     AppendTo[startConstraints, 
+      BooleanMinimize@
+       Implies[(alpha[{blankNum, x, y - 1}] && 
+          Not@alpha[{blankNum, x, y}]), 
+        Or @@ Table[wp[{i, x, y, 0}], {i, 1, numWords}]]] 
+      ],
+    AppendTo[startConstraints, 
+     BooleanMinimize@
+      Implies[(Not@alpha[{blankNum, x, y}] && 
+         Not@alpha[{blankNum, x, y + 1}]), 
+       Or @@ Table[wp[{i, x, y, 0}], {i, 1, numWords}]]]
+    ],
+   {x, 1, gridSize},
+   {y, 1, gridSize}
+   ];
+  
+  Table[
+   If[x - 1 >= 1,
+    If[x + 1 <= gridSize,
+     AppendTo[startConstraints, 
+      BooleanMinimize@
+       Implies[(alpha[{blankNum, x - 1, y}] && 
+          Not@alpha[{blankNum, x, y}] && 
+          Not@alpha[{blankNum, x + 1, y}]), 
+        Or @@ Table[wp[{i, x, y, 1}], {i, 1, numWords}]]],
+     AppendTo[startConstraints, 
+      BooleanMinimize@
+       Implies[(alpha[{blankNum, x - 1, y}] && 
+          Not@alpha[{blankNum, x, y}]), 
+        Or @@ Table[wp[{i, x, y, 1}], {i, 1, numWords}]]]
+     ],
+    AppendTo[startConstraints, 
+     BooleanMinimize@
+      Implies[(Not@alpha[{blankNum, x, y}] && 
+         Not@alpha[{blankNum, x + 1, y}]), 
+       Or @@ Table[wp[{i, x, y, 1}], {i, 1, numWords}]]]
+    ],
+   {x, 1, gridSize},
+   {y, 1, gridSize}
+   ];
+  
+  AppendTo[satConstraints, And @@ Flatten@startConstraints];
+  
+  satConstraints = RandomSample[satConstraints];
+  satConstraints = And @@ Flatten@satConstraints;
+  res = Transpose[{satVariables, 
+     SatisfiabilityInstances[satConstraints, satVariables, 
+       Method -> "SAT"] // Flatten}];
+  placementScheme = 
+   Select[res, Head@#[[1]] === wp && #[[2]] === True &];
+  
+  crossword = Table[" ", {i, gridSize}, {j, gridSize}];
+  emptyCrossword = Table[" ", {i, gridSize}, {j, gridSize}];
+  Table[
+   whichWord = placementScheme[[i]][[1]][[1]][[1]];
+   xLoc = placementScheme[[i]][[1]][[1]][[2]];
+   yLoc = placementScheme[[i]][[1]][[1]][[3]];
+   orient = placementScheme[[i]][[1]][[1]][[4]];
+   
+   colour = RandomColor[];
+   fS = 0.85;
+   Table[
+    If[orient == 0,
+     emptyCrossword[[xLoc]][[yLoc + j - 1]] = InputField[" ", String,
+       FieldSize -> {fS, fS}, 
+       BaseStyle -> {colour, Bold, Larger, FontSize -> 25}, 
+       ImageMargins -> 0];
+     
+     crossword[[xLoc]][[yLoc + j - 1]] = 
+      InputField[StringPart[words[[whichWord]], j] // ToUpperCase, 
+       String,
+       FieldSize -> {fS, fS}, 
+       BaseStyle -> {colour, Bold, Larger, FontSize -> 25}, 
+       ImageMargins -> 0],
+     
+     emptyCrossword[[xLoc + j - 1]][[yLoc]] = 
+      InputField[" ", String, 
+       FieldSize -> {fS, fS}, 
+       BaseStyle -> {colour, Bold, Larger, FontSize -> 25}, 
+       ImageMargins -> 0];
+     
+     crossword[[xLoc + j - 1]][[yLoc]] = 
+      InputField[StringPart[words[[whichWord]], j] // ToUpperCase, 
+       String, 
+       FieldSize -> {fS, fS}, 
+       BaseStyle -> {colour, Bold, Larger, FontSize -> 25}, 
+       ImageMargins -> 0],
+     ],
+    {j, StringLength@words[[whichWord]]}],
+   {i, Length@placementScheme}];
+  
+  edges = {};
+  
+  Table[
+   If[! SameQ[crossword[[x]][[y]], " "],
+    Table[
+     nx = x + dir[[1]];
+     ny = y + dir[[2]];
+     If[nx >= 1 && nx <= gridSize && ny >= 1 && ny <= gridSize,
+      If[! SameQ[crossword[[nx]][[ny]], " "], 
+       AppendTo[edges, {{x, y} -> {nx, ny}}]]],
+     {dir, {{0, 1}, {1, 0}, {-1, 0}, {0, -1}}}
+     ]
+    ],
+   {x, 1, gridSize},
+   {y, 1, gridSize}
+   ];
+  
+  g = Graph[Flatten[edges, 1], DirectedEdges -> False];
+  quality = Length[ConnectedComponents[g]];
+  
+  display = Grid[crossword, Frame -> All, Background -> Black];
+  emptyDisplay = 
+   Grid[emptyCrossword, Frame -> All, Background -> Black];
+  Return[{quality, display, emptyDisplay}];
+  ]
+
+gridSize = 10;
+
+words = RandomChoice[
+  Select[WordList[], StringLength@# > 2 && StringLength@# <= 6 &], 11]
+{gridSize^2, Total[StringLength@# & /@ words]}
+
+crosswords = 
+  Table[generateCrossword[gridSize, words] // AbsoluteTiming, {n, 1}];
+
+crosswords = 
+  ParallelTable[generateCrossword[gridSize, words], {n, 10}];
+
+crosswords = Sort[crosswords];
+crosswords // Column
